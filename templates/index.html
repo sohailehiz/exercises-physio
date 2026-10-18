@@ -194,10 +194,16 @@ async function refresh(stay){if(stay){const k=idx;ex=await getDay();idx=k;draw()
 function pick(i,el,stay){const f=el.files[0];if(!f)return;pend={i,f,stay};$('#pvimg').src=URL.createObjectURL(f);$('#pv').classList.remove('hide');el.value=''}
 function pvCancel(){URL.revokeObjectURL($('#pvimg').src);$('#pv').classList.add('hide');pend=null}
 async function pvOk(){const p=pend;pvCancel();if(p)await upload(p.i,p.f,p.stay)}
-async function upload(i,f,stay){const fd=new FormData();fd.append('file',f);
+async function shrink(f){ // resize in the browser first (max 1600px JPEG); falls back to the original file
+  try{const bmp=await createImageBitmap(f),k=Math.min(1,1600/Math.max(bmp.width,bmp.height));
+    const c=document.createElement('canvas');c.width=Math.round(bmp.width*k);c.height=Math.round(bmp.height*k);
+    c.getContext('2d').drawImage(bmp,0,0,c.width,c.height);
+    return await new Promise(r=>c.toBlob(b=>r(b?new File([b],'photo.jpg',{type:'image/jpeg'}):f),'image/jpeg',.85))}
+  catch(e){return f}}
+async function upload(i,f,stay){f=await shrink(f);const fd=new FormData();fd.append('file',f);
   try{const res=await fetch('/api/image/'+i,{method:'POST',body:fd});
     if(!res.ok){let m='';try{m=(await res.json()).error}catch(e){}
-      alert('Upload failed ('+res.status+'). '+(m||(res.status==413?'The image is over 25 MB.':'Please try again.')));return}
+      alert('Upload failed ('+res.status+'). '+(m||(res.status==413?'The image is too large for the server. Try a smaller copy.':'Please try again.')));return}
   }catch(e){alert('Upload failed: '+e.message);return}
   await refresh(stay)}
 async function rmImg(i,stay){await api('/api/image/'+i,{method:'DELETE'});await refresh(stay)}
