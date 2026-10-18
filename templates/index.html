@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Physio Tracker</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--fg:#1d2733;--muted:#6b7785;--line:#d5dae1;--acc:#0f7b6c;--acc-fg:#fff}
+@media (prefers-color-scheme:dark){:root{--bg:#12171c;--card:#1b232b;--fg:#e8edf2;--muted:#9aa6b2;--line:#33404c;--acc:#35b8a4;--acc-fg:#08201b}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,sans-serif}
+main{max-width:560px;margin:0 auto;padding:16px}
+nav{display:flex;gap:8px;margin-bottom:16px}
+nav button{flex:1;padding:10px;border:1px solid var(--line);background:var(--card);color:var(--fg);border-radius:10px;font:inherit;cursor:pointer}
+nav button.on{background:var(--acc);color:var(--acc-fg);border-color:var(--acc)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:12px}
+.muted{color:var(--muted);font-size:14px}
+h2{margin:0 0 4px;font-size:20px}
+.track{height:8px;background:var(--line);border-radius:4px;overflow:hidden;margin:6px 0 14px}
+#bar{height:100%;width:0;background:var(--acc);transition:width .3s}
+#art svg,#art img{width:100%;max-height:230px;object-fit:contain;display:block;background:var(--bg);border-radius:10px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px}
+input,select{padding:9px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg);font:inherit}
+input[type=number]{width:90px;font-size:20px}
+.btn{padding:11px 16px;border:1px solid var(--line);background:var(--card);color:var(--fg);border-radius:10px;font:inherit;cursor:pointer}
+.btn.p{background:var(--acc);color:var(--acc-fg);border-color:var(--acc);font-weight:600;flex:1}
+.item{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line);cursor:pointer}
+table{width:100%;border-collapse:collapse;font-size:14px}td,th{text-align:left;padding:5px 4px;border-bottom:1px solid var(--line)}
+.sess{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px}
+.sess button{flex:1;padding:8px;border:1px solid var(--line);background:var(--card);color:var(--fg);border-radius:10px;font:inherit;cursor:pointer}
+.sess button.on{border-color:var(--acc);box-shadow:inset 0 0 0 1px var(--acc)}
+.ov{position:fixed;inset:0;background:#000a;display:flex;align-items:center;justify-content:center;padding:16px;z-index:9}
+.hide{display:none}
+</style>
+</head>
+<body>
+<main>
+<nav><button data-t="today" class="on">Today</button><button data-t="progress">Progress</button><button data-t="manage">Exercises</button></nav>
+
+<section id="today">
+  <div class="sess" id="sess"></div>
+  <div class="muted" id="count"></div><div class="track"><div id="bar"></div></div>
+  <div id="card"></div>
+</section>
+
+<section id="progress" class="hide">
+  <div class="card"><div class="muted" id="sum"></div>
+    <div class="row"><select id="sel"></select></div><div id="chart"></div></div>
+  <div class="card"><strong>Recent days</strong><div id="days"></div></div>
+</section>
+
+<section id="manage" class="hide"><div id="list"></div></section>
+</main>
+
+<div id="pv" class="ov hide"><div class="card" style="max-width:420px;width:100%;margin:0"><strong>Preview</strong>
+  <img id="pvimg" alt="preview" style="width:100%;max-height:50vh;object-fit:contain;margin:10px 0;border-radius:10px">
+  <div class="row"><button class="btn" onclick="pvCancel()">Cancel</button><button class="btn p" onclick="pvOk()">Use this image</button></div></div></div>
+<script>
+const $=s=>document.querySelector(s);
+const today=()=>{const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')};
+const api=(u,o)=>fetch(u,o).then(r=>r.json());
+const post=(u,b)=>api(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
+let ex=[],idx=0,showIll=false,timer,sess=1,cnt={},auto=true,pend=null,setting={sessions:2};
+const nSess=()=>Math.max(setting.sessions||2,...Object.keys(cnt).map(Number));
+
+/* ---- vector figure: poses are joint angles (degrees, 0=right, 90=down, -90=up) ---- */
+const L={t:44,th:32,sh:30,ua:24,fa:22};
+const P={
+ lunge:{h:[120,95],t:-95,l:[[10,90],[100,180]],a:[[-80,-80]],hl:'hip',B:{t:-110,a:[[-125,-125]]}},
+ heel:{h:[130,118],t:-20,l:[[180,180],[180,-45]],a:[[100,90]],hl:'thigh'},
+ butterfly:{h:[160,120],t:0,l:[[215,150],[215,150]],a:[[180,180]],hl:'hip'},
+ bridge:{h:[150,96],t:30,l:[[160,95],[160,95]],a:[[180,180]],hl:'hip'},
+ kneechest:{h:[150,125],t:0,l:[[-100,150],[-115,170]],a:[[-120,-150]],hl:'hip'},
+ pressup:{h:[110,128],t:-50,l:[[180,180],[180,180]],a:[[90,90]],hl:'back',B:{t:-62,a:[[90,90]]}},
+ roller:{h:[120,122],t:12,l:[[180,180],[180,180]],a:[[12,12]],hl:'back',B:{t:25,a:[[25,25]]}},
+ hamstring:{h:[100,90],t:-30,l:[[0,0],[90,90]],a:[[45,45]],hl:'thigh',g:96,B:{t:-8,a:[[55,40]]}},
+ figure4:{h:[100,90],t:-20,l:[[90,90],[20,150]],a:[[30,20]],hl:'hip',g:96}
+};
+const pt=(p,d,l)=>[p[0]+l*Math.cos(d*Math.PI/180),p[1]+l*Math.sin(d*Math.PI/180)];
+const seg=(a,b)=>`<line x1="${a[0]}" y1="${a[1]}" x2="${b[0]}" y2="${b[1]}"/>`;
+function fig(p){
+  const h=p.h,s=pt(h,p.t,L.t),hd=pt(s,p.t,14);let g=seg(h,s);
+  p.l.forEach(([a,b])=>{const k=pt(h,a,L.th);g+=seg(h,k)+seg(k,pt(k,b,L.sh))});
+  p.a.forEach(([a,b])=>{const e=pt(s,a,L.ua);g+=seg(s,e)+seg(e,pt(e,b,L.fa))});
+  const c={hip:h,back:pt(h,p.t,L.t*.5),thigh:pt(h,p.l[0][0],L.th*.7)}[p.hl];
+  return `<svg viewBox="0 0 300 160"><line x1="20" x2="280" y1="${p.g||138}" y2="${p.g||138}" stroke="var(--line)" stroke-width="3"/>
+  <circle cx="${c[0]}" cy="${c[1]}" r="12" fill="#f5c400" opacity=".8"/>
+  <g stroke="var(--fg)" stroke-width="5" stroke-linecap="round">${g}</g>
+  <circle cx="${hd[0]}" cy="${hd[1]}" r="10" fill="var(--fg)"/></svg>`;
+}
+const mix=(a,b,k)=>Array.isArray(a)?a.map((x,i)=>mix(x,b[i],k)):a+(b-a)*k;
+function art(e){
+  clearInterval(timer);const box=$('#art'),p=P[e.pose];
+  if(e.image&&!showIll){box.innerHTML=`<img src="/uploads/${e.image}" alt="${e.name}">`;return}
+  if(!p){box.innerHTML='<div class="muted" style="padding:40px 10px;text-align:center;background:var(--bg);border-radius:10px">No figure for this exercise. Use Upload image below.</div>';return}
+  box.innerHTML=fig(p);
+  if(p.B){let t=0;const q={...p,...p.B};timer=setInterval(()=>{t+=.09;const k=(Math.sin(t)+1)/2;
+    box.innerHTML=fig({...p,t:mix(p.t,q.t,k),a:mix(p.a,q.a,k)})},60)}
+}
+
+/* ---- today flow ---- */
+const dayUrl=()=>'/api/day?date='+today()+'&session='+sess;
+async function load(){
+  setting=await api('/api/settings');cnt=await api('/api/sessions?date='+today());
+  if(sess>nSess())sess=nSess();
+  ex=await api(dayUrl());
+  if(auto){auto=false;let k=1;while(k<nSess()&&(cnt[k]||0)>=ex.length)k++;if(k!=sess){sess=k;ex=await api(dayUrl())}}
+  const i=ex.findIndex(e=>!e.status);idx=i<0?ex.length:i;draw()}
+function sessBar(){$('#sess').innerHTML=Array.from({length:nSess()},(_,i)=>i+1).map(n=>`<div style="flex:1 1 150px;display:flex;gap:4px"><button class="${sess==n?'on':''}" onclick="setSess(${n})">Session ${n} · ${cnt[n]||0}/${ex.length}</button><button title="Reset session ${n}" onclick="resetSess(${n})" style="flex:0 0 auto">Reset</button></div>`).join('')+`<button onclick="addSess()" style="flex:0 0 auto">+ Session</button>`}
+async function addSess(){const n=nSess()+1;await post('/api/settings',{sessions:n});sess=n;auto=false;await load()}
+async function setSess(n){sess=n;auto=false;await load()}
+async function resetSess(n){if(!confirm(`Reset Session ${n} for today? Its entries will be deleted so you can redo it.`))return;
+  await post('/api/reset',{date:today(),session:n});sess=n;auto=false;await load()}
+function draw(){
+  clearInterval(timer);showIll=false;
+  const done=ex.filter(e=>e.status).length;
+  $('#bar').style.width=100*done/ex.length+'%';$('#count').textContent=`${done} of ${ex.length} logged in Session ${sess}`;cnt[sess]=done;sessBar();
+  if(idx>=ex.length){
+    $('#card').innerHTML=`<div class="card"><h2>Session ${sess} complete</h2><p class="muted">Tap an exercise to change its entry.</p>`+
+      ex.map((e,i)=>`<div class="item" onclick="idx=${i};draw()"><span>${e.name}</span><span>${e.status=='done'?e.reps+' '+e.unit:'skipped'}</span></div>`).join('')+`</div>`;return}
+  const e=ex[idx];
+  $('#card').innerHTML=`<div class="card"><h2>${idx+1}. ${e.name}</h2>
+   <div id="art"></div>
+   <div class="row">
+     ${e.image?`<button class="btn" onclick="showIll=!showIll;art(ex[idx]);this.textContent=showIll?'Show my image':'Show illustration'">Show illustration</button>`:''}
+     <label class="btn">${e.image?'Replace image':'Upload image'}<input type="file" accept="image/*" hidden onchange="pick(${e.id},this,true)"></label>
+     ${e.image?`<button class="btn" onclick="rmImg(${e.id},true)">Reset to illustration</button>`:''}</div>
+   <p>${e.cue}</p>
+   <div class="row"><label>${e.unit=='sec'?'Seconds held':'Reps done'}</label>
+     <input id="reps" type="number" min="0" inputmode="numeric" value="${e.reps??e.target}"></div>
+   <div class="row"><button class="btn" onclick="idx=Math.max(0,idx-1);draw()">Back</button>
+     <button class="btn" onclick="logIt('skipped')">Skip</button>
+     <button class="btn p" onclick="logIt('done')">Done</button></div></div>`;
+  art(e);
+}
+async function logIt(status){
+  const e=ex[idx],reps=status=='done'?(+$('#reps').value||0):null;
+  await post('/api/log',{date:today(),session:sess,exercise_id:e.id,status,reps});
+  e.status=status;e.reps=reps;
+  const n=ex.findIndex((x,i)=>i>idx&&!x.status);idx=n<0?ex.length:n;draw();
+}
+
+/* ---- progress ---- */
+async function prog(){
+  const s=await api('/api/stats');
+  $('#sel').innerHTML=ex.map(e=>`<option value="${e.id}">${e.name}</option>`).join('');
+  $('#sel').value=window._sel||ex[0].id;
+  const id=+$('#sel').value,all=s.filter(r=>r.exercise_id==id&&r.status=='done');
+  const days=[...new Set(s.map(r=>r.day))].sort(),S=Math.max(setting.sessions||2,...s.map(r=>r.session));
+  $('#sum').textContent=`${days.length} day(s) logged`;
+  if(!all.length){$('#chart').innerHTML='<p class="muted">No entries for this exercise yet.</p>'}
+  else{
+    const D=d=>Date.parse(d)/864e5,d0=D(all[0].day),span=Math.max(1,D(all.at(-1).day)-d0),mx=Math.max(...all.map(r=>r.reps),1);
+    const X=r=>34+(D(r.day)-d0)/span*236,Y=r=>130-r.reps/mx*105,COL=['var(--acc)','#e08a1e','#6a5acd','#d6456f','#3b82c4','#8a6d3b'],col=n=>COL[(n-1)%COL.length];
+    const line=n=>{const p=all.filter(r=>r.session==n);let d='';p.forEach((r,i)=>{d+=(i&&D(r.day)-D(p[i-1].day)==1?'L':'M')+X(r)+' '+Y(r)});
+      return `<path d="${d}" fill="none" stroke="${col(n)}" stroke-width="2.5"/>`+p.map(r=>`<circle cx="${X(r)}" cy="${Y(r)}" r="3.5" fill="${col(n)}"/>`).join('')};
+    $('#chart').innerHTML=`<svg viewBox="0 0 300 160"><text x="2" y="28" font-size="10" fill="var(--muted)">${mx}</text><text x="2" y="133" font-size="10" fill="var(--muted)">0</text>
+     <line x1="30" x2="290" y1="130" y2="130" stroke="var(--line)"/>${Array.from({length:S},(_,i)=>line(i+1)).join('')}
+     <text x="30" y="150" font-size="10" fill="var(--muted)">${all[0].day}</text><text x="290" y="150" font-size="10" text-anchor="end" fill="var(--muted)">${all.at(-1).day}</text></svg>
+     <p class="muted">${Array.from({length:S},(_,i)=>`<span style="color:${col(i+1)}">●</span> S${i+1}`).join(' &nbsp;')}. Lines break where a day was missed or skipped.</p>`}
+  $('#days').innerHTML='<div style="overflow-x:auto"><table><tr><th>Date</th>'+Array.from({length:S},(_,i)=>`<th>S${i+1}</th>`).join('')+'</tr>'+days.slice(-14).reverse().map(d=>{
+    const r=s.filter(x=>x.day==d),c=k=>r.filter(x=>x.session==k&&x.status=='done').length;
+    return `<tr><td>${d}</td>${Array.from({length:S},(_,i)=>`<td>${c(i+1)}/${ex.length}</td>`).join('')}</tr>`}).join('')+'</table></div>';
+}
+$('#sel').onchange=()=>{window._sel=$('#sel').value;prog()};
+
+/* ---- manage ---- */
+const POSES=Object.keys(P),TA='padding:9px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg);font:inherit;flex:1;min-width:200px';
+function manage(){
+  $('#list').innerHTML=`<div class="card"><strong>Sessions per day</strong>
+   <div class="row"><button class="btn" onclick="chSess(-1)">&minus;</button><span>${nSess()}</span><button class="btn" onclick="chSess(1)">+</button></div></div>
+  <div class="card"><strong>Add exercise</strong>
+   <div class="row"><input id="nn" placeholder="Name" style="flex:1"></div>
+   <div class="row"><textarea id="nc" rows="2" placeholder="Instructions / cues" style="${TA}"></textarea></div>
+   <div class="row"><input type="number" id="nt" value="10" min="1" style="width:80px"><select id="nu"><option value="reps">reps</option><option value="sec">seconds</option></select>
+    <select id="np"><option value="">No figure (upload image)</option>${POSES.map(k=>`<option>${k}</option>`).join('')}</select>
+    <button class="btn p" onclick="addEx()">Add</button></div></div>`+
+  ex.map(e=>`<div class="card"><input id="n${e.id}" value="${e.name.replace(/"/g,'&quot;')}" style="width:100%;font-weight:600">
+   ${e.image?`<img src="/uploads/${e.image}" alt="" style="width:100%;max-height:120px;object-fit:contain;margin-top:8px;border-radius:8px">`:''}
+   <div class="row"><textarea id="c${e.id}" rows="2" style="${TA}">${e.cue||''}</textarea></div>
+   <div class="row"><input type="number" id="t${e.id}" value="${e.target}" min="1" style="width:80px">
+   <select id="u${e.id}"><option value="reps" ${e.unit=='reps'?'selected':''}>reps</option><option value="sec" ${e.unit=='sec'?'selected':''}>seconds</option></select>
+   <button class="btn p" onclick="saveT(${e.id})">Save</button><button class="btn" onclick="delEx(${e.id})">Remove</button></div>
+   <div class="row"><input type="file" accept="image/*" onchange="pick(${e.id},this)">
+   ${e.image?`<button class="btn" onclick="rmImg(${e.id})">Use illustration</button>`:''}</div></div>`).join('');
+}
+async function addEx(){const n=$('#nn').value.trim();if(!n){alert('Enter a name');return}
+  await post('/api/exercise',{name:n,cue:$('#nc').value,unit:$('#nu').value,target:$('#nt').value,pose:$('#np').value});await refresh(false)}
+async function saveT(i){await post('/api/exercise/'+i,{name:$('#n'+i).value,cue:$('#c'+i).value,unit:$('#u'+i).value,target:$('#t'+i).value});await refresh(false)}
+async function delEx(i){if(!confirm('Remove this exercise? Your past history is kept.'))return;await api('/api/exercise/'+i,{method:'DELETE'});await refresh(false)}
+async function chSess(d){await post('/api/settings',{sessions:Math.max(1,nSess()+d)});await refresh(false)}
+async function refresh(stay){if(stay){const k=idx;ex=await api(dayUrl());idx=k;draw()}else{await load();manage()}}
+function pick(i,el,stay){const f=el.files[0];if(!f)return;pend={i,f,stay};$('#pvimg').src=URL.createObjectURL(f);$('#pv').classList.remove('hide');el.value=''}
+function pvCancel(){URL.revokeObjectURL($('#pvimg').src);$('#pv').classList.add('hide');pend=null}
+async function pvOk(){const p=pend;pvCancel();if(p)await upload(p.i,p.f,p.stay)}
+async function upload(i,f,stay){const fd=new FormData();fd.append('file',f);
+  const r=await api('/api/image/'+i,{method:'POST',body:fd});if(r.error)alert(r.error);await refresh(stay)}
+async function rmImg(i,stay){await api('/api/image/'+i,{method:'DELETE'});await refresh(stay)}
+
+document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('on',x===b));
+  ['today','progress','manage'].forEach(t=>$('#'+t).classList.toggle('hide',t!==b.dataset.t));
+  if(b.dataset.t=='progress')prog();if(b.dataset.t=='manage')manage();if(b.dataset.t=='today')load();
+});
+load();
+</script>
+</body>
+</html>
