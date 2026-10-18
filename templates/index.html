@@ -53,7 +53,7 @@ table{width:100%;border-collapse:collapse;font-size:14px}td,th{text-align:left;p
 </main>
 
 <div id="pv" class="ov hide"><div class="card" style="max-width:420px;width:100%;margin:0"><strong>Preview</strong>
-  <img id="pvimg" alt="preview" style="width:100%;max-height:50vh;object-fit:contain;margin:10px 0;border-radius:10px">
+  <img id="pvimg" alt="preview" onerror="this.removeAttribute('src');this.alt='No preview for this file type here. It will be converted when you upload.'" style="width:100%;max-height:50vh;object-fit:contain;margin:10px 0;border-radius:10px">
   <div class="row"><button class="btn" onclick="pvCancel()">Cancel</button><button class="btn p" onclick="pvOk()">Use this image</button></div></div></div>
 <script>
 const $=s=>document.querySelector(s);
@@ -91,7 +91,7 @@ function fig(p){
 const mix=(a,b,k)=>Array.isArray(a)?a.map((x,i)=>mix(x,b[i],k)):a+(b-a)*k;
 function art(e){
   clearInterval(timer);const box=$('#art'),p=P[e.pose];
-  if(e.image&&!showIll){box.innerHTML=`<img src="/uploads/${e.image}" alt="${e.name}">`;return}
+  if(e.img&&!showIll){box.innerHTML=`<img src="${e.img}" alt="${e.name}">`;return}
   if(!p){box.innerHTML='<div class="muted" style="padding:40px 10px;text-align:center;background:var(--bg);border-radius:10px">No figure for this exercise. Use Upload image below.</div>';return}
   box.innerHTML=fig(p);
   if(p.B){let t=0;const q={...p,...p.B};timer=setInterval(()=>{t+=.09;const k=(Math.sin(t)+1)/2;
@@ -100,11 +100,12 @@ function art(e){
 
 /* ---- today flow ---- */
 const dayUrl=()=>'/api/day?date='+today()+'&session='+sess;
+const getDay=async()=>{const r=await api(dayUrl());r.forEach(e=>{e.img=e.img||(e.image?'/uploads/'+e.image:null)});return r};
 async function load(){
   setting=await api('/api/settings');cnt=await api('/api/sessions?date='+today());
   if(sess>nSess())sess=nSess();
-  ex=await api(dayUrl());
-  if(auto){auto=false;let k=1;while(k<nSess()&&(cnt[k]||0)>=ex.length)k++;if(k!=sess){sess=k;ex=await api(dayUrl())}}
+  ex=await getDay();
+  if(auto){auto=false;let k=1;while(k<nSess()&&(cnt[k]||0)>=ex.length)k++;if(k!=sess){sess=k;ex=await getDay()}}
   const i=ex.findIndex(e=>!e.status);idx=i<0?ex.length:i;draw()}
 function sessBar(){$('#sess').innerHTML=Array.from({length:nSess()},(_,i)=>i+1).map(n=>`<div style="flex:1 1 150px;display:flex;gap:4px"><button class="${sess==n?'on':''}" onclick="setSess(${n})">Session ${n} · ${cnt[n]||0}/${ex.length}</button><button title="Reset session ${n}" onclick="resetSess(${n})" style="flex:0 0 auto">Reset</button></div>`).join('')+`<button onclick="addSess()" style="flex:0 0 auto">+ Session</button>`}
 async function addSess(){const n=nSess()+1;await post('/api/settings',{sessions:n});sess=n;auto=false;await load()}
@@ -122,8 +123,8 @@ function draw(){
   $('#card').innerHTML=`<div class="card"><h2>${idx+1}. ${e.name}</h2>
    <div id="art"></div>
    <div class="row">
-     ${e.image?`<button class="btn" onclick="showIll=!showIll;art(ex[idx]);this.textContent=showIll?'Show my image':'Show illustration'">Show illustration</button>`:''}
-     <label class="btn">${e.image?'Replace image':'Upload image'}<input type="file" accept="image/*" hidden onchange="pick(${e.id},this,true)"></label>
+     ${e.img?`<button class="btn" onclick="showIll=!showIll;art(ex[idx]);this.textContent=showIll?'Show my image':'Show illustration'">Show illustration</button>`:''}
+     <label class="btn">${e.img?'Replace image':'Upload image'}<input type="file" accept="image/*,.heic,.heif" hidden onchange="pick(${e.id},this,true)"></label>
      ${e.image?`<button class="btn" onclick="rmImg(${e.id},true)">Reset to illustration</button>`:''}</div>
    <p>${e.cue}</p>
    <div class="row"><label>${e.unit=='sec'?'Seconds held':'Reps done'}</label>
@@ -176,12 +177,12 @@ function manage(){
     <select id="np"><option value="">No figure (upload image)</option>${POSES.map(k=>`<option>${k}</option>`).join('')}</select>
     <button class="btn p" onclick="addEx()">Add</button></div></div>`+
   ex.map(e=>`<div class="card"><input id="n${e.id}" value="${e.name.replace(/"/g,'&quot;')}" style="width:100%;font-weight:600">
-   ${e.image?`<img src="/uploads/${e.image}" alt="" style="width:100%;max-height:120px;object-fit:contain;margin-top:8px;border-radius:8px">`:''}
+   ${e.img?`<img src="${e.img}" alt="" style="width:100%;max-height:120px;object-fit:contain;margin-top:8px;border-radius:8px">`:''}
    <div class="row"><textarea id="c${e.id}" rows="2" style="${TA}">${e.cue||''}</textarea></div>
    <div class="row"><input type="number" id="t${e.id}" value="${e.target}" min="1" style="width:80px">
    <select id="u${e.id}"><option value="reps" ${e.unit=='reps'?'selected':''}>reps</option><option value="sec" ${e.unit=='sec'?'selected':''}>seconds</option></select>
    <button class="btn p" onclick="saveT(${e.id})">Save</button><button class="btn" onclick="delEx(${e.id})">Remove</button></div>
-   <div class="row"><input type="file" accept="image/*" onchange="pick(${e.id},this)">
+   <div class="row"><input type="file" accept="image/*,.heic,.heif" onchange="pick(${e.id},this)">
    ${e.image?`<button class="btn" onclick="rmImg(${e.id})">Use illustration</button>`:''}</div></div>`).join('');
 }
 async function addEx(){const n=$('#nn').value.trim();if(!n){alert('Enter a name');return}
@@ -189,12 +190,16 @@ async function addEx(){const n=$('#nn').value.trim();if(!n){alert('Enter a name'
 async function saveT(i){await post('/api/exercise/'+i,{name:$('#n'+i).value,cue:$('#c'+i).value,unit:$('#u'+i).value,target:$('#t'+i).value});await refresh(false)}
 async function delEx(i){if(!confirm('Remove this exercise? Your past history is kept.'))return;await api('/api/exercise/'+i,{method:'DELETE'});await refresh(false)}
 async function chSess(d){await post('/api/settings',{sessions:Math.max(1,nSess()+d)});await refresh(false)}
-async function refresh(stay){if(stay){const k=idx;ex=await api(dayUrl());idx=k;draw()}else{await load();manage()}}
+async function refresh(stay){if(stay){const k=idx;ex=await getDay();idx=k;draw()}else{await load();manage()}}
 function pick(i,el,stay){const f=el.files[0];if(!f)return;pend={i,f,stay};$('#pvimg').src=URL.createObjectURL(f);$('#pv').classList.remove('hide');el.value=''}
 function pvCancel(){URL.revokeObjectURL($('#pvimg').src);$('#pv').classList.add('hide');pend=null}
 async function pvOk(){const p=pend;pvCancel();if(p)await upload(p.i,p.f,p.stay)}
 async function upload(i,f,stay){const fd=new FormData();fd.append('file',f);
-  const r=await api('/api/image/'+i,{method:'POST',body:fd});if(r.error)alert(r.error);await refresh(stay)}
+  try{const res=await fetch('/api/image/'+i,{method:'POST',body:fd});
+    if(!res.ok){let m='';try{m=(await res.json()).error}catch(e){}
+      alert('Upload failed ('+res.status+'). '+(m||(res.status==413?'The image is over 25 MB.':'Please try again.')));return}
+  }catch(e){alert('Upload failed: '+e.message);return}
+  await refresh(stay)}
 async function rmImg(i,stay){await api('/api/image/'+i,{method:'DELETE'});await refresh(stay)}
 
 document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{

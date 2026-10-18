@@ -1,5 +1,14 @@
 """Physio exercise tracker. Run: pip install -r requirements.txt && python app.py"""
 import os, sqlite3, datetime, hmac
+try:  # optional: converts phone photos (HEIC), fixes rotation and shrinks big images
+    from PIL import Image, ImageOps
+    try:
+        import pillow_heif
+        pillow_heif.register_heif_opener()
+    except ImportError:
+        pillow_heif = None
+except ImportError:
+    Image = ImageOps = pillow_heif = None
 from flask import Flask, Response, g, jsonify, request, render_template, send_from_directory
 
 BASE = os.path.dirname(os.path.abspath(__file__))
@@ -7,7 +16,7 @@ DB = os.path.join(BASE, "data.db")
 UP = os.path.join(BASE, "uploads")
 os.makedirs(UP, exist_ok=True)
 app = Flask(__name__)
-app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024  # 10 MB upload limit
+app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024  # 25 MB upload limit
 
 # Simple password gate for when the app is hosted online. Set APP_PASSWORD (and optionally APP_USER)
 # as environment variables on the host. If APP_PASSWORD is not set (local use), there is no login.
@@ -79,13 +88,26 @@ def index():
     return render_template("index.html")
 
 
+def bundled():
+    """Images committed to the repo in static/exercises/, named by exercise number: 1.jpg, 2.png, ..."""
+    d = os.path.join(BASE, "static", "exercises")
+    out = {}
+    if os.path.isdir(d):
+        for f in os.listdir(d):
+            stem, ext = os.path.splitext(f)
+            if ext.lower() in (".jpg", ".jpeg", ".png", ".webp") and stem.isdigit():
+                out[int(stem)] = "/static/exercises/" + f
+    return out
+
+
 @app.get("/api/day")
 def day():
     rows = db().execute(
         "SELECT e.*, n.status, n.reps FROM exercises e "
         "LEFT JOIN entries n ON n.exercise_id=e.id AND n.day=? AND n.session=? WHERE e.active=1 ORDER BY e.pos",
         (request.args["date"], int(request.args.get("session", 1)))).fetchall()
-    return jsonify([dict(r) for r in rows])
+    b = bundled()  # an image uploaded in the app wins over one bundled in the repo
+    return jsonify([dict(r, img=("/uploads/" + r["image"]) if r["image"] else b.get(r["pos"])) for r in rows])
 
 
 @app.post("/api/log")
@@ -174,10 +196,24 @@ def target(i):
 def image(i):
     f = request.files["file"]
     ext = os.path.splitext(f.filename)[1].lower()
-    if ext not in (".jpg", ".jpeg", ".png", ".webp"):
-        return jsonify(error="Use JPG, PNG or WebP"), 400
-    name = f"ex{i}_{int(datetime.datetime.now().timestamp())}{ext}"
-    f.save(os.path.join(UP, name))
+    heic = ext in (".heic", ".heif")
+    if ext not in (".jpg", ".jpeg", ".png", ".webp") and not heic:
+        return jsonify(error="Use JPG, PNG, WebP or HEIC"), 400
+    if heic and not pillow_heif:
+        return jsonify(error="HEIC support is not installed on the server (pip install pillow-heif)."), 400
+    stamp = int(datetime.datetime.now().timestamp())
+    if Image:  # normalise everything to a rotated, max-1600px JPEG
+        try:
+            im = Image.open(f.stream)
+            im = ImageOps.exif_transpose(im) or im
+            im.thumbnail((1600, 1600))
+            name = f"ex{i}_{stamp}.jpg"
+            im.convert("RGB").save(os.path.join(UP, name), "JPEG", quality=85)
+        except Exception:
+            return jsonify(error="Could not read that image file."), 400
+    else:
+        name = f"ex{i}_{stamp}{ext}"
+        f.save(os.path.join(UP, name))
     db().execute("UPDATE exercises SET image=? WHERE id=?", (name, i))
     db().commit()
     return jsonify(image=name)
