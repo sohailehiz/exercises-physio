@@ -95,7 +95,7 @@ def bundled():
     if os.path.isdir(d):
         for f in os.listdir(d):
             stem, ext = os.path.splitext(f)
-            if ext.lower() in (".jpg", ".jpeg", ".png", ".webp") and stem.isdigit():
+            if ext.lower() in (".jpg", ".jpeg", ".png", ".webp", ".gif") and stem.isdigit():
                 out[int(stem)] = "/static/exercises/" + f
     return out
 
@@ -197,12 +197,18 @@ def image(i):
     f = request.files["file"]
     ext = os.path.splitext(f.filename)[1].lower()
     heic = ext in (".heic", ".heif")
-    if ext not in (".jpg", ".jpeg", ".png", ".webp") and not heic:
-        return jsonify(error="Use JPG, PNG, WebP or HEIC"), 400
+    if ext not in (".jpg", ".jpeg", ".png", ".webp", ".gif") and not heic:
+        return jsonify(error="Use JPG, PNG, WebP, GIF or HEIC"), 400
     if heic and not pillow_heif:
         return jsonify(error="HEIC support is not installed on the server (pip install pillow-heif)."), 400
     stamp = int(datetime.datetime.now().timestamp())
-    if Image:  # normalise everything to a rotated, max-1600px JPEG
+    if ext == ".gif":  # keep the original file so the animation survives
+        if f.stream.read(3) != b"GIF":
+            return jsonify(error="That file is not a valid GIF."), 400
+        f.stream.seek(0)
+        name = f"ex{i}_{stamp}.gif"
+        f.save(os.path.join(UP, name))
+    elif Image:  # normalise everything else to a rotated, max-1600px JPEG
         try:
             im = Image.open(f.stream)
             im = ImageOps.exif_transpose(im) or im

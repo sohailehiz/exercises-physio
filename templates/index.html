@@ -195,6 +195,7 @@ function pick(i,el,stay){const f=el.files[0];if(!f)return;pend={i,f,stay};$('#pv
 function pvCancel(){URL.revokeObjectURL($('#pvimg').src);$('#pv').classList.add('hide');pend=null}
 async function pvOk(){const p=pend;pvCancel();if(p)await upload(p.i,p.f,p.stay)}
 async function shrink(f){ // resize in the browser first (max 1600px JPEG); falls back to the original file
+  if(f.type=='image/gif'||/\.gif$/i.test(f.name))return f; // keep GIFs untouched so they stay animated
   try{const bmp=await createImageBitmap(f),k=Math.min(1,1600/Math.max(bmp.width,bmp.height));
     const c=document.createElement('canvas');c.width=Math.round(bmp.width*k);c.height=Math.round(bmp.height*k);
     c.getContext('2d').drawImage(bmp,0,0,c.width,c.height);
